@@ -1,5 +1,10 @@
 # markdown-it-region-snippets
 
+[![npm version](https://img.shields.io/npm/v/@radarleaf/markdown-it-region-snippets)](https://www.npmjs.com/package/@radarleaf/markdown-it-region-snippets)
+[![npm downloads](https://img.shields.io/npm/dm/@radarleaf/markdown-it-region-snippets)](https://www.npmjs.com/package/@radarleaf/markdown-it-region-snippets)
+[![CI](https://github.com/mysticmind/markdown-it-region-snippets/actions/workflows/ci.yml/badge.svg)](https://github.com/mysticmind/markdown-it-region-snippets/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A [markdown-it](https://github.com/markdown-it/markdown-it) plugin that extracts `#region` code snippets from source files and expands `snippet: name` markers in markdown into fenced code blocks with syntax highlighting.
 
 Works with **VitePress**, **VuePress**, **Docusaurus**, or any markdown-it setup. Uses its own `snippet:` marker syntax — no conflict with VitePress's built-in `<<<` file includes.
