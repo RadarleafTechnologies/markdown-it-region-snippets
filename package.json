@@ -1,5 +1,5 @@
 {
-  "name": "markdown-it-region-snippets",
+  "name": "@radarleaf/markdown-it-region-snippets",
   "version": "1.0.0",
   "description": "markdown-it plugin that extracts #region code snippets from source files and expands them in markdown",
   "type": "module",
