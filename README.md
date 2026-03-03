@@ -1,7 +1,7 @@
 # markdown-it-region-snippets
 
 [![npm version](https://img.shields.io/npm/v/@radarleaf/markdown-it-region-snippets)](https://www.npmjs.com/package/@radarleaf/markdown-it-region-snippets)
-[![npm downloads](https://img.shields.io/npm/dm/@radarleaf/markdown-it-region-snippets)](https://www.npmjs.com/package/@radarleaf/markdown-it-region-snippets)
+<!-- [![npm downloads](https://img.shields.io/npm/dm/@radarleaf/markdown-it-region-snippets)](https://www.npmjs.com/package/@radarleaf/markdown-it-region-snippets) -->
 [![CI](https://github.com/mysticmind/markdown-it-region-snippets/actions/workflows/ci.yml/badge.svg)](https://github.com/mysticmind/markdown-it-region-snippets/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -40,9 +40,7 @@ export default defineConfig({
     config(md) {
       md.use(regionSnippetPlugin, {
         rootDir,
-        dirs: ['src', 'samples'],
-        extensions: ['.cs', '.ts'],
-        include: /^sample_\w+$/,
+        syntax: 'snippet-colon',
       })
     },
   },
