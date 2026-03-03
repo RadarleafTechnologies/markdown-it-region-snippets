@@ -1,0 +1,53 @@
+{
+  "name": "markdown-it-region-snippets",
+  "version": "1.0.0",
+  "description": "markdown-it plugin that extracts #region code snippets from source files and expands them in markdown",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs && tsgo",
+    "typecheck": "tsgo --noEmit",
+    "lint": "oxlint src/",
+    "test": "node --import tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "markdown-it",
+    "markdown-it-plugin",
+    "snippets",
+    "region",
+    "vitepress",
+    "code-snippets",
+    "documentation"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "markdown-it": ">=13.0.0"
+  },
+  "peerDependenciesMeta": {
+    "markdown-it": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.0.0",
+    "@types/node": "^25.3.3",
+    "@typescript/native-preview": "^7.0.0-dev.20260302.1",
+    "oxc-transform": "^0.65.0",
+    "oxlint": "^0.16.0",
+    "tsx": "^4.21.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
