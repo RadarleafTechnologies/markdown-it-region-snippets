@@ -9,6 +9,7 @@ import { buildLangMap, langFromExtension, DEFAULT_LANG_MAP } from './lib/lang-ma
 import { MARKERS, dedent, findRegion, extractSnippetsFromFile } from './lib/extractor.js'
 import { resolveSyntax, SYNTAX_PRESETS, DEFAULT_SYNTAX } from './lib/syntax.js'
 import { isFileRef, parseFileRef, resolveFileInclude } from './lib/file-include.js'
+import { parseInlineSnippetOpen, isInlineSnippetClose, detectWrappedFence, parseInlineValue } from './lib/inline-snippet.js'
 
 export interface RegionSnippetOptions {
   /** Absolute path to project root (required). */
@@ -29,6 +30,10 @@ export interface RegionSnippetOptions {
   langMap?: Record<string, string>
   /** Enable @/path file includes (default: true). Set to false to let VitePress handle <<< @/path natively. */
   fileIncludes?: boolean
+  /** Enable inline snippet mode (default: false). When true, `snippet: name` markers become
+   *  inline snippet openers expecting content followed by `<!-- /snippet -->` or `<!-- endSnippet -->`.
+   *  Named snippet lookup from pre-scanned files is disabled. File includes still work. */
+  inlineSnippets?: boolean
   /** Emit `<a id='...'>` anchor before each code block (default: true). Requires `urlPrefix` to be set. */
   anchor?: boolean
   /** Emit `<sup>` source link after each code block (default: true). Requires `urlPrefix` to be set. */
@@ -64,6 +69,7 @@ export function regionSnippetPlugin(md: MarkdownIt, options: RegionSnippetOption
     langMap: langMapOverrides,
     syntax,
     fileIncludes: fileIncludesEnabled = true,
+    inlineSnippets: inlineSnippetsEnabled = false,
     anchor: anchorEnabled = true,
     sourceLink: sourceLinkEnabled = true,
     logPrefix = '[region-snippets]',
@@ -107,25 +113,49 @@ export function regionSnippetPlugin(md: MarkdownIt, options: RegionSnippetOption
     console.log(`${logPrefix} Loaded ${snippets.size} snippets`)
   }
 
-  const parser = (state: StateBlock, startLine: number, _endLine: number, silent: boolean): boolean => {
+  // Regex to strip HTML comment wrapper: <!-- inner content -->
+  const HTML_COMMENT_RE = /^<!--\s*([\s\S]*?)\s*-->$/
+
+  const parser = (state: StateBlock, startLine: number, endLine: number, silent: boolean): boolean => {
     const pos = state.bMarks[startLine] + state.tShift[startLine]
     const max = state.eMarks[startLine]
 
     // Indented 4+ spaces → code block, not ours
     if (state.sCount[startLine] - state.blkIndent >= 4) return false
 
-    // Quick bail: first character must match marker (skip if unknown)
-    if (firstCharCode > 0 && state.src.charCodeAt(pos) !== firstCharCode) return false
-
+    const charCode = state.src.charCodeAt(pos)
     const line = state.src.slice(pos, max).trim()
-    const match = line.match(markerRegex)
-    if (!match) return false
 
-    const value = match[1].trim()
+    // ── Try to extract a marker value ──
+    // In inline mode, first try HTML-comment-wrapped marker: <!-- snippet: name -->
+    // Then fall back to regular marker for file includes.
+    // In normal mode, only try the regular marker.
+    let value: string | null = null
+    let isCommentWrapped = false
 
+    if (inlineSnippetsEnabled && charCode === 0x3C /* < */) {
+      const commentMatch = line.match(HTML_COMMENT_RE)
+      if (commentMatch) {
+        const inner = commentMatch[1].trim()
+        const markerMatch = inner.match(markerRegex)
+        if (markerMatch) {
+          value = markerMatch[1].trim()
+          isCommentWrapped = true
+        }
+      }
+    }
+
+    if (value === null) {
+      // Quick bail: first character must match marker
+      if (firstCharCode > 0 && charCode !== firstCharCode) return false
+      const match = line.match(markerRegex)
+      if (!match) return false
+      value = match[1].trim()
+    }
+
+    // ── File include mode (works in both wrapped and unwrapped) ──
     if (isFileRef(value)) {
       if (!fileIncludesEnabled) return false
-      // ── File include mode ──
       if (silent) return true
 
       const parsed = parseFileRef(value)
@@ -174,7 +204,84 @@ export function regionSnippetPlugin(md: MarkdownIt, options: RegionSnippetOption
       return true
     }
 
-    // ── Named snippet mode (existing) ──
+    // ── Inline snippet mode (requires HTML-comment-wrapped marker) ──
+    if (inlineSnippetsEnabled) {
+      if (!isCommentWrapped) return false
+
+      const parsed = parseInlineValue(value)
+      if (!parsed) return false
+
+      if (silent) return true
+
+      // Scan forward for closing marker
+      let closeLine = -1
+      for (let i = startLine + 1; i < endLine; i++) {
+        const cPos = state.bMarks[i] + state.tShift[i]
+        const cMax = state.eMarks[i]
+        const cLine = state.src.slice(cPos, cMax)
+        if (isInlineSnippetClose(cLine)) {
+          closeLine = i
+          break
+        }
+      }
+
+      if (closeLine === -1) {
+        const msg = `${logPrefix} Inline snippet '${parsed.name}' has no closing marker`
+        if (strict) throw new Error(msg)
+        if (!silent) console.warn(msg)
+        state.line = startLine + 1
+        const token = state.push('fence', 'code', 0)
+        token.info = ''
+        token.content = `\u26A0 ${msg}\n`
+        token.markup = '```'
+        token.map = [startLine, startLine + 1]
+        return true
+      }
+
+      // Extract content lines between opening and closing markers
+      const contentLines: string[] = []
+      for (let i = startLine + 1; i < closeLine; i++) {
+        const lPos = state.bMarks[i]
+        const lMax = state.eMarks[i]
+        contentLines.push(state.src.slice(lPos, lMax))
+      }
+
+      // Detect wrapped fence mode
+      const detected = detectWrappedFence(contentLines)
+
+      // Determine language: opening marker {lang} > fence lang > empty string
+      const lang = parsed.lang ?? (detected.isFenced && detected.lang ? detected.lang : '')
+
+      // Dedent content
+      const code = dedent(detected.content).replace(/\s+$/, '')
+
+      // Advance past closing marker
+      state.line = closeLine + 1
+
+      // Emit anchor (gated on anchorEnabled, independent of urlPrefix)
+      if (anchorEnabled) {
+        const anchor = state.push('html_block', '', 0)
+        anchor.content = `<a id='snippet-${encodeURIComponent(parsed.name)}'></a>\n`
+        anchor.map = [startLine, closeLine + 1]
+      }
+
+      // Emit fence token with VitePress-compatible info string
+      const token = state.push('fence', 'code', 0)
+      let info = lang
+      if (parsed.highlights) info += `{${parsed.highlights}}`
+      if (parsed.title) info += `[${parsed.title}]`
+      if (parsed.attrs) info += `  ${parsed.attrs}`
+      token.info = info
+      token.content = code + '\n'
+      token.markup = '```'
+      token.map = [startLine, closeLine + 1]
+
+      // No source link emitted — no external source file
+
+      return true
+    }
+
+    // ── Named snippet mode ──
     const name = value
 
     // If include filter is set and the name doesn't match, skip.
@@ -238,3 +345,5 @@ export { resolveSyntax, SYNTAX_PRESETS, DEFAULT_SYNTAX } from './lib/syntax.js'
 export type { SyntaxDef } from './lib/syntax.js'
 export { isFileRef, parseFileRef, resolveFileInclude } from './lib/file-include.js'
 export type { ParsedFileRef, FileIncludeResult } from './lib/file-include.js'
+export { parseInlineSnippetOpen, isInlineSnippetClose, detectWrappedFence, parseInlineValue } from './lib/inline-snippet.js'
+export type { InlineSnippetOpen, DetectedFence } from './lib/inline-snippet.js'

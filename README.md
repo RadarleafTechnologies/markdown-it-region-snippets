@@ -5,7 +5,7 @@
 [![CI](https://github.com/mysticmind/markdown-it-region-snippets/actions/workflows/ci.yml/badge.svg)](https://github.com/mysticmind/markdown-it-region-snippets/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A [markdown-it](https://github.com/markdown-it/markdown-it) plugin that extracts `#region` code snippets from source files and expands `snippet: name` markers in markdown into fenced code blocks with syntax highlighting.
+A [markdown-it](https://github.com/markdown-it/markdown-it) plugin that extracts `#region` code snippets from source files and expands `snippet: name` markers in markdown into fenced code blocks with syntax highlighting. Also supports direct file includes and inline snippet definitions.
 
 Works with **VitePress**, **VuePress**, **Docusaurus**, or any markdown-it setup. Uses its own `snippet:` marker syntax — no conflict with VitePress's built-in `<<<` file includes.
 
@@ -101,9 +101,9 @@ public void Hello()
 ```
 ````
 
-## Region Snippets vs File Includes
+## Region Snippets vs File Includes vs Inline Snippets
 
-This plugin supports two ways to embed source code in your docs: **named region snippets** and **direct file includes**. Each has its strengths — use whichever fits the situation, or mix both.
+This plugin supports three ways to embed source code in your docs: **named region snippets**, **direct file includes**, and **inline snippets**. Each has its strengths — use whichever fits the situation, or mix all three.
 
 ### Named Region Snippets
 
@@ -147,6 +147,25 @@ snippet: @/src/Example.cs {1,3,5-8 :line-numbers} [Example]
 - **On-demand loading** — files are read at parse time, so there's no startup cost for directories you never reference.
 - **Relative paths** — `@./path` and `@../path` resolve relative to the markdown file, making co-located docs intuitive.
 
+### Inline Snippets
+
+Define snippet content directly in your markdown. When `inlineSnippets: true`, the configured marker syntax wrapped in an HTML comment (`<!-- snippet: name -->`, `<!-- <<< #name -->`, etc.) becomes an inline snippet opener — content follows the marker and is closed by `<!-- /snippet -->` or `<!-- endSnippet -->`. Both the opening and closing markers are HTML comments, so they are invisible in standard markdown renderers.
+
+```markdown
+<!-- snippet: my_func {python} -->
+def hello():
+    print("hello")
+<!-- /snippet -->
+```
+
+**Advantages:**
+
+- **Invisible markers** — both opening and closing markers are HTML comments, so they render cleanly in plain markdown viewers.
+- **Self-contained docs** — code examples live right in the markdown file. No external source files needed.
+- **VitePress-compatible modifiers** — line highlights, attributes, titles, and language overrides work the same as file includes.
+- **Anchors** — each inline snippet emits a named anchor (`<a id='snippet-name'>`) for in-page linking.
+- **Opt-in** — disabled by default (`inlineSnippets: false`), enable when needed. File includes still work normally.
+
 ### When to Use Which
 
 | Scenario | Recommended approach |
@@ -155,10 +174,12 @@ snippet: @/src/Example.cs {1,3,5-8 :line-numbers} [Example]
 | Source files may be renamed or reorganized | Named region snippet |
 | Including an entire config/script file | File include |
 | One-off reference where adding a region marker is overkill | File include |
-| Need line highlights, titles, or attributes | File include (or named snippet + `urlPrefix` for source links) |
+| Need line highlights, titles, or attributes | File include or inline snippet |
 | Want build-time validation that examples still exist | Named region snippet |
+| Code example written directly in docs, no source file | Inline snippet |
+| Docs that must render in plain markdown viewers too | Inline snippet (wrapped fence mode) |
 
-Both approaches support automatic language detection, source links (via `urlPrefix`), and region extraction. They can be freely mixed in the same project.
+All three approaches can be freely mixed in the same project.
 
 ## Options
 
@@ -176,6 +197,7 @@ Both approaches support automatic language detection, source links (via `urlPref
 | `langMap` | `Record<string, string>` | auto | Override extension→language mappings |
 | `syntax` | `string \| RegExp` | `'snippet-colon'` | Marker syntax — preset name, keyword, or custom RegExp |
 | `fileIncludes` | `boolean` | `true` | Enable `@/path` file includes. Set `false` to let VitePress handle `<<<` file includes natively |
+| `inlineSnippets` | `boolean` | `false` | Enable inline snippet mode. Marker syntax wrapped in HTML comments (`<!-- snippet: name -->`) becomes an inline opener; named snippet lookup is disabled. File includes still work |
 | `logPrefix` | `string` | `'[region-snippets]'` | Console log prefix |
 | `silent` | `boolean` | `false` | Suppress console output |
 | `strict` | `boolean` | `true` | Throw on missing snippets/files. Set `false` to emit a warning fence instead |
@@ -379,6 +401,105 @@ Include a region with a title:
 snippet: @./examples/demo.cs#sample_setup [Setup Code]
 ```
 
+## Inline Snippets
+
+When `inlineSnippets: true`, the configured marker syntax wrapped in an HTML comment (`<!-- snippet: name -->`, `<!-- <<< #name -->`, etc.) becomes an inline snippet opener. Content follows the marker line and is closed by `<!-- /snippet -->` or `<!-- endSnippet -->`. Both opening and closing markers are HTML comments, making them invisible in standard markdown renderers. Named snippet lookup from pre-scanned files is disabled. File includes (`@/path`) still work normally.
+
+```js
+md.use(regionSnippetPlugin, {
+  rootDir,
+  inlineSnippets: true,
+})
+```
+
+### Syntax
+
+**Opening marker** — the configured marker syntax wrapped in an HTML comment, with optional modifiers:
+
+```markdown
+<!-- snippet: name -->
+<!-- snippet: name {python} -->
+<!-- snippet: name {python 1,3,5-8 :line-numbers} [My Title] -->
+```
+
+With the `triple-chevron` preset:
+
+```markdown
+<!-- <<< #name {python} -->
+```
+
+**Closing marker** — two forms:
+
+```markdown
+<!-- /snippet -->
+<!-- endSnippet -->
+```
+
+### Content Modes
+
+The plugin auto-detects which mode is in use.
+
+**Mode A — Raw content** (language specified in opening marker):
+
+```markdown
+<!-- snippet: my_func {python} -->
+def hello():
+    print("hello")
+<!-- /snippet -->
+```
+
+**Mode B — Wrapped fenced code block** (degrades gracefully in standard renderers):
+
+````markdown
+<!-- snippet: my_func -->
+```python
+def hello():
+    print("hello")
+```
+<!-- /snippet -->
+````
+
+In Mode B, the plugin unwraps the fence and emits it as a proper token. The wrapped code block also renders normally in plain markdown viewers that don't run this plugin.
+
+### Language Priority
+
+1. `{lang}` in the opening marker (highest)
+2. Fence language from wrapped code block (Mode B)
+3. Empty string (lowest)
+
+### `{...}` Block
+
+Same VitePress-compatible syntax as file includes:
+
+- **Language**: `python`, `ts`, `c#` — sets the fence language
+- **Highlights**: `1,3,5-8` — line highlighting
+- **Attributes**: `:line-numbers` — passed through to fence info
+
+### `[Title]`
+
+An optional `[Title]` at the end sets the code block title:
+
+```markdown
+<!-- snippet: setup {python} [Setup Code] -->
+```
+
+### Anchors
+
+Each inline snippet emits an anchor tag for in-page linking, gated on the `anchor` option (default: `true`):
+
+```html
+<a id='snippet-my_func'></a>
+```
+
+No source link is emitted since there is no external source file.
+
+### Error Handling
+
+A missing closing marker follows the same `strict` / lenient behavior as other snippet types:
+
+- `strict: true` (default) — throws an error
+- `strict: false` — emits a warning fence (`⚠ Inline snippet 'name' has no closing marker`)
+
 ## Supported Region Markers
 
 | Language | Start | End |
@@ -526,6 +647,10 @@ import {
   isFileRef,
   parseFileRef,
   resolveFileInclude,
+  parseInlineSnippetOpen,
+  parseInlineValue,
+  isInlineSnippetClose,
+  detectWrappedFence,
 } from 'markdown-it-region-snippets'
 ```
 

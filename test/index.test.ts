@@ -14,6 +14,7 @@ import { loadSnippets, DEFAULT_SKIP_DIRS, DEFAULT_EXTENSIONS } from '../src/lib/
 import { regionSnippetPlugin } from '../src/index.js'
 import { resolveSyntax, SYNTAX_PRESETS, DEFAULT_SYNTAX } from '../src/lib/syntax.js'
 import { isFileRef, parseFileRef, resolveFileInclude } from '../src/lib/file-include.js'
+import { parseInlineSnippetOpen, isInlineSnippetClose, detectWrappedFence, parseInlineValue } from '../src/lib/inline-snippet.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const fixturesDir = join(__dirname, 'fixtures')
@@ -1531,5 +1532,457 @@ describe('regionSnippetPlugin (file includes)', () => {
     const fence = state2._tokens.find(t => t.type === 'fence')
     assert.ok(fence)
     assert.equal(fence.info, 'csharp')
+  })
+})
+
+// ── parseInlineSnippetOpen ──────────────────────────────────────────────
+
+describe('parseInlineSnippetOpen', () => {
+  it('parses basic snippet marker', () => {
+    const result = parseInlineSnippetOpen('<!-- snippet: my_func -->')
+    assert.ok(result)
+    assert.equal(result.name, 'my_func')
+    assert.equal(result.lang, null)
+    assert.equal(result.highlights, null)
+    assert.equal(result.attrs, null)
+    assert.equal(result.title, null)
+  })
+
+  it('parses marker with lang modifier', () => {
+    const result = parseInlineSnippetOpen('<!-- snippet: my_func {python} -->')
+    assert.ok(result)
+    assert.equal(result.name, 'my_func')
+    assert.equal(result.lang, 'python')
+  })
+
+  it('parses marker with full modifiers', () => {
+    const result = parseInlineSnippetOpen('<!-- snippet: my_func {python 1,3,5-8 :line-numbers} [My Title] -->')
+    assert.ok(result)
+    assert.equal(result.name, 'my_func')
+    assert.equal(result.lang, 'python')
+    assert.equal(result.highlights, '1,3,5-8')
+    assert.equal(result.attrs, ':line-numbers')
+    assert.equal(result.title, 'My Title')
+  })
+
+  it('parses indented marker', () => {
+    const result = parseInlineSnippetOpen('   <!-- snippet: indented -->')
+    assert.ok(result)
+    assert.equal(result.name, 'indented')
+  })
+
+  it('returns null for non-matching lines', () => {
+    assert.equal(parseInlineSnippetOpen('just some text'), null)
+    assert.equal(parseInlineSnippetOpen('<!-- not a snippet -->'), null)
+    assert.equal(parseInlineSnippetOpen('<!-- /snippet -->'), null)
+  })
+
+  it('returns null if no name is provided', () => {
+    assert.equal(parseInlineSnippetOpen('<!-- snippet: -->'), null)
+  })
+})
+
+// ── isInlineSnippetClose ────────────────────────────────────────────────
+
+describe('isInlineSnippetClose', () => {
+  it('matches <!-- /snippet -->', () => {
+    assert.equal(isInlineSnippetClose('<!-- /snippet -->'), true)
+  })
+
+  it('matches <!-- endSnippet -->', () => {
+    assert.equal(isInlineSnippetClose('<!-- endSnippet -->'), true)
+  })
+
+  it('matches with indentation', () => {
+    assert.equal(isInlineSnippetClose('   <!-- /snippet -->'), true)
+    assert.equal(isInlineSnippetClose('  <!-- endSnippet -->'), true)
+  })
+
+  it('does not match non-closing lines', () => {
+    assert.equal(isInlineSnippetClose('<!-- snippet: foo -->'), false)
+    assert.equal(isInlineSnippetClose('just some text'), false)
+    assert.equal(isInlineSnippetClose('<!-- other -->'), false)
+  })
+})
+
+// ── detectWrappedFence ──────────────────────────────────────────────────
+
+describe('detectWrappedFence', () => {
+  it('detects backtick fence', () => {
+    const lines = ['```python', 'print("hi")', '```']
+    const result = detectWrappedFence(lines)
+    assert.equal(result.isFenced, true)
+    assert.equal(result.lang, 'python')
+    assert.equal(result.content, 'print("hi")')
+  })
+
+  it('detects tilde fence', () => {
+    const lines = ['~~~js', 'console.log("hi")', '~~~']
+    const result = detectWrappedFence(lines)
+    assert.equal(result.isFenced, true)
+    assert.equal(result.lang, 'js')
+    assert.equal(result.content, 'console.log("hi")')
+  })
+
+  it('returns raw content when no fence', () => {
+    const lines = ['line1', 'line2']
+    const result = detectWrappedFence(lines)
+    assert.equal(result.isFenced, false)
+    assert.equal(result.content, 'line1\nline2')
+  })
+
+  it('returns raw content for mismatched fences', () => {
+    const lines = ['```python', 'code', '~~~']
+    const result = detectWrappedFence(lines)
+    assert.equal(result.isFenced, false)
+  })
+
+  it('handles empty content', () => {
+    const lines = ['```python', '```']
+    const result = detectWrappedFence(lines)
+    assert.equal(result.isFenced, true)
+    assert.equal(result.lang, 'python')
+    assert.equal(result.content, '')
+  })
+})
+
+// ── parseInlineValue ────────────────────────────────────────────────────
+
+describe('parseInlineValue', () => {
+  it('parses plain name', () => {
+    const result = parseInlineValue('my_func')
+    assert.ok(result)
+    assert.equal(result.name, 'my_func')
+    assert.equal(result.lang, null)
+    assert.equal(result.highlights, null)
+    assert.equal(result.attrs, null)
+    assert.equal(result.title, null)
+  })
+
+  it('parses name with lang', () => {
+    const result = parseInlineValue('my_func {python}')
+    assert.ok(result)
+    assert.equal(result.name, 'my_func')
+    assert.equal(result.lang, 'python')
+  })
+
+  it('parses name with full modifiers', () => {
+    const result = parseInlineValue('my_func {python 1,3,5-8 :line-numbers} [My Title]')
+    assert.ok(result)
+    assert.equal(result.name, 'my_func')
+    assert.equal(result.lang, 'python')
+    assert.equal(result.highlights, '1,3,5-8')
+    assert.equal(result.attrs, ':line-numbers')
+    assert.equal(result.title, 'My Title')
+  })
+
+  it('returns null for empty string', () => {
+    assert.equal(parseInlineValue(''), null)
+    assert.equal(parseInlineValue('  '), null)
+  })
+})
+
+// ── plugin inline snippet integration ───────────────────────────────────
+
+describe('regionSnippetPlugin (inline snippets)', () => {
+  function createMockMd() {
+    const rules: any[] = []
+    return {
+      block: {
+        ruler: {
+          __rules__: [{ name: 'fence' }],
+          before(refName: string, name: string, fn: any) {
+            rules.push({ refName, name, fn })
+          },
+        },
+      },
+      _registeredRules: rules,
+    }
+  }
+
+  function createMultiLineState(src: string, env: Record<string, unknown> = {}) {
+    const lines = src.split('\n')
+    const bMarks: number[] = []
+    const eMarks: number[] = []
+    const tShift: number[] = []
+    const sCount: number[] = []
+    let offset = 0
+    for (const line of lines) {
+      bMarks.push(offset)
+      let indent = 0
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === ' ') indent++
+        else if (line[i] === '\t') indent += 4
+        else break
+      }
+      tShift.push(indent)
+      sCount.push(indent)
+      eMarks.push(offset + line.length)
+      offset += line.length + 1
+    }
+
+    const tokens: any[] = []
+    return {
+      src,
+      bMarks,
+      tShift,
+      eMarks,
+      sCount,
+      blkIndent: 0,
+      line: 0,
+      env,
+      push(type: string, tag: string, nesting: number) {
+        const t = { type, tag, nesting, info: '', content: '', markup: '', map: null }
+        tokens.push(t)
+        return t
+      },
+      _tokens: tokens,
+    }
+  }
+
+  it('uses <!-- snippet: name --> as inline opener (Mode A — raw content)', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: my_func {python} -->\ndef hello():\n    print("hello")\n<!-- /snippet -->\n'
+    const state = createMultiLineState(src)
+
+    const result = parserFn(state as any, 0, 5, false)
+    assert.equal(result, true)
+    assert.equal(state.line, 4)
+
+    const fence = state._tokens.find(t => t.type === 'fence')
+    assert.ok(fence)
+    assert.equal(fence.info, 'python')
+    assert.ok(fence.content.includes('def hello():'))
+    assert.ok(fence.content.includes('print("hello")'))
+  })
+
+  it('handles wrapped fence mode (Mode B)', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: my_func -->\n```python\ndef hello():\n    print("hello")\n```\n<!-- /snippet -->\n'
+    const state = createMultiLineState(src)
+
+    const result = parserFn(state as any, 0, 7, false)
+    assert.equal(result, true)
+    assert.equal(state.line, 6)
+
+    const fence = state._tokens.find(t => t.type === 'fence')
+    assert.ok(fence)
+    assert.equal(fence.info, 'python')
+    assert.ok(fence.content.includes('def hello():'))
+  })
+
+  it('opening marker lang overrides fence lang', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: my_func {typescript} -->\n```python\nconst x = 1\n```\n<!-- /snippet -->\n'
+    const state = createMultiLineState(src)
+
+    parserFn(state as any, 0, 6, false)
+    const fence = state._tokens.find(t => t.type === 'fence')
+    assert.ok(fence)
+    assert.equal(fence.info, 'typescript')
+  })
+
+  it('emits anchor', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, anchor: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: my_func {python} -->\ncode\n<!-- /snippet -->\n'
+    const state = createMultiLineState(src)
+
+    parserFn(state as any, 0, 4, false)
+    const anchor = state._tokens.find(t => t.type === 'html_block')
+    assert.ok(anchor)
+    assert.ok(anchor.content.includes("id='snippet-my_func'"))
+  })
+
+  it('does not emit source link', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, urlPrefix: 'https://github.com', inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: my_func {python} -->\ncode\n<!-- /snippet -->\n'
+    const state = createMultiLineState(src)
+
+    parserFn(state as any, 0, 4, false)
+    const links = state._tokens.filter(t => t.type === 'html_block' && t.content.includes('snippet source'))
+    assert.equal(links.length, 0)
+  })
+
+  it('handles endSnippet closing marker', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: my_func {python} -->\ncode here\n<!-- endSnippet -->\n'
+    const state = createMultiLineState(src)
+
+    const result = parserFn(state as any, 0, 4, false)
+    assert.equal(result, true)
+    const fence = state._tokens.find(t => t.type === 'fence')
+    assert.ok(fence)
+    assert.ok(fence.content.includes('code here'))
+  })
+
+  it('handles empty content', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: empty {python} -->\n<!-- /snippet -->\n'
+    const state = createMultiLineState(src)
+
+    const result = parserFn(state as any, 0, 3, false)
+    assert.equal(result, true)
+    const fence = state._tokens.find(t => t.type === 'fence')
+    assert.ok(fence)
+    assert.equal(fence.info, 'python')
+  })
+
+  it('throws on missing closing marker in strict mode', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, strict: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: unclosed {python} -->\nsome code\n'
+    const state = createMultiLineState(src)
+
+    assert.throws(() => parserFn(state as any, 0, 3, false), /no closing marker/)
+  })
+
+  it('emits warning fence on missing closing marker in lenient mode', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, strict: false, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: unclosed {python} -->\nsome code\n'
+    const state = createMultiLineState(src)
+
+    const result = parserFn(state as any, 0, 3, false)
+    assert.equal(result, true)
+    const fence = state._tokens.find(t => t.type === 'fence')
+    assert.ok(fence)
+    assert.ok(fence.content.includes('\u26A0'))
+  })
+
+  it('default mode uses named snippet lookup, not inline', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true })
+    const parserFn = md._registeredRules[0].fn
+
+    // With inlineSnippets off (default), snippet: name does named lookup
+    const src = 'snippet: sample_hello_world\n'
+    const state = createMultiLineState(src)
+
+    const result = parserFn(state as any, 0, 2, false)
+    assert.equal(result, true)
+    const fence = state._tokens.find(t => t.type === 'fence')
+    assert.ok(fence)
+    assert.equal(fence.info, 'csharp')
+    assert.ok(fence.content.includes('Console.WriteLine'))
+  })
+
+  it('returns true on silent probe', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: my_func {python} -->\ncode\n<!-- /snippet -->\n'
+    const state = createMultiLineState(src)
+
+    const result = parserFn(state as any, 0, 4, true)
+    assert.equal(result, true)
+    assert.equal(state._tokens.length, 0)
+  })
+
+  it('handles multiple inline snippets in one document', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: first {python} -->\nprint("first")\n<!-- /snippet -->\n<!-- snippet: second {js} -->\nconsole.log("second")\n<!-- /snippet -->\n'
+    const state = createMultiLineState(src)
+
+    const r1 = parserFn(state as any, 0, 7, false)
+    assert.equal(r1, true)
+    assert.equal(state.line, 3)
+
+    const r2 = parserFn(state as any, 3, 7, false)
+    assert.equal(r2, true)
+    assert.equal(state.line, 6)
+
+    const fences = state._tokens.filter(t => t.type === 'fence')
+    assert.equal(fences.length, 2)
+    assert.equal(fences[0].info, 'python')
+    assert.equal(fences[1].info, 'js')
+  })
+
+  it('file includes still work when inlineSnippets is true', () => {
+    const md = createMockMd()
+    const rootDir = join(fixturesDir, '..')
+    regionSnippetPlugin(md as any, { rootDir, dirs: ['.'], silent: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = 'snippet: @/fixtures/full-file.js\n'
+    const state = createMultiLineState(src)
+
+    assert.equal(parserFn(state as any, 0, 2, false), true)
+    const fence = state._tokens.find(t => t.type === 'fence')
+    assert.ok(fence)
+    assert.equal(fence.info, 'js')
+    assert.ok(fence.content.includes('function greet'))
+  })
+
+  it('dedents content', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: my_func {python} -->\n    def hello():\n        print("hello")\n<!-- /snippet -->\n'
+    const state = createMultiLineState(src)
+
+    parserFn(state as any, 0, 5, false)
+    const fence = state._tokens.find(t => t.type === 'fence')
+    assert.ok(fence)
+    assert.ok(fence.content.startsWith('def hello():'))
+    assert.ok(fence.content.includes('    print("hello")'))
+  })
+
+  it('builds full modifier info string', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, inlineSnippets: true })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- snippet: my_func {python 1,3,5-8 :line-numbers} [My Title] -->\ncode\n<!-- /snippet -->\n'
+    const state = createMultiLineState(src)
+
+    parserFn(state as any, 0, 4, false)
+    const fence = state._tokens.find(t => t.type === 'fence')
+    assert.ok(fence)
+    assert.equal(fence.info, 'python{1,3,5-8}[My Title]  :line-numbers')
+  })
+
+  it('works with triple-chevron syntax', () => {
+    const md = createMockMd()
+    regionSnippetPlugin(md as any, { rootDir: fixturesDir, dirs: ['.'], silent: true, inlineSnippets: true, syntax: 'triple-chevron' })
+    const parserFn = md._registeredRules[0].fn
+
+    const src = '<!-- <<< #my_func {python} -->\ncode\n<!-- /snippet -->\n'
+    const state = createMultiLineState(src)
+
+    const result = parserFn(state as any, 0, 4, false)
+    assert.equal(result, true)
+    const fence = state._tokens.find(t => t.type === 'fence')
+    assert.ok(fence)
+    assert.equal(fence.info, 'python')
   })
 })
