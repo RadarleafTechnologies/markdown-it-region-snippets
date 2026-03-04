@@ -30,6 +30,14 @@
     "code-snippets",
     "documentation"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RadarleafTechnologies/markdown-it-region-snippets.git"
+  },
+  "homepage": "https://github.com/RadarleafTechnologies/markdown-it-region-snippets#readme",
+  "bugs": {
+    "url": "https://github.com/RadarleafTechnologies/markdown-it-region-snippets/issues"
+  },
   "license": "MIT",
   "peerDependencies": {
     "markdown-it": ">=13.0.0"
